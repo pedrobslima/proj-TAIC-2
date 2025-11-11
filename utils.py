@@ -13,9 +13,9 @@ import optuna
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.svm import SVC#, SVR # kernels: 'linear', 'poly' e 'rbf'
+from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import GradientBoostingClassifier
-
+from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from sklearn.model_selection import cross_val_score
 
@@ -297,15 +297,19 @@ def searchAndTrain(experiment_name, num_trials, load=False):
         
         return score
 
-    def svm_rbf_objective(trial):
+    def logreg_objective(trial):
+        #penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
         C = trial.suggest_float('C', 1e-3, 100, log=True)
-        gamma = trial.suggest_categorical('gamma', ['scale', 'auto'])
-        max_iter = trial.suggest_int('max_iter', 500, 3000)
+        solver = trial.suggest_categorical('solver', ['lbfgs', 'liblinear', 'saga'])
+        max_iter = trial.suggest_int('max_iter', 100, 1000)
         
-        clf = SVC(
-            kernel='rbf', C=C, gamma=gamma, max_iter=max_iter, random_state=int(os.getenv('SEED'))
-        ).fit(X_train_norm, y_train)
+        # Ajusta solver baseado no penalty
+        params = {
+            'penalty': 'l2', 'C': C, 'solver': solver, 
+            'max_iter': max_iter, 'random_state': int(os.getenv('SEED'))
+        }
         
+        clf = LogisticRegression(**params).fit(X_train_norm, y_train)
         score = cross_val_score(clf, X_train_norm, y_train, scoring=scorer_string, n_jobs=-1, cv=10)
         return score.mean()
 
@@ -327,54 +331,84 @@ def searchAndTrain(experiment_name, num_trials, load=False):
         
         score = cross_val_score(clf, X_train, y_train, scoring=scorer_string, n_jobs=-1, cv=10)
         return score.mean()
+    
+    def xgb_objective(trial):
+        n_estimators = trial.suggest_int('n_estimators', 50, 500, log=True)
+        learning_rate = trial.suggest_float('learning_rate', 1e-3, 1, log=True)
+        max_depth = trial.suggest_int('max_depth', 3, 20)
+        min_child_weight = trial.suggest_int('min_child_weight', 1, 10)
+        gamma = trial.suggest_float('gamma', 0, 5)
+        #subsample = trial.suggest_float('subsample', 0.5, 1.0)
+        #colsample_bytree = trial.suggest_float('colsample_bytree', 0.5, 1.0)
+        reg_alpha = trial.suggest_float('reg_alpha', 1e-5, 100, log=True)
+        reg_lambda = trial.suggest_float('reg_lambda', 1e-5, 100, log=True)
+        
+        clf = XGBClassifier(
+            n_estimators=n_estimators, learning_rate=learning_rate,
+            max_depth=max_depth, min_child_weight=min_child_weight,
+            gamma=gamma, #1subsample=subsample, colsample_bytree=colsample_bytree,
+            reg_alpha=reg_alpha, reg_lambda=reg_lambda, 
+            random_state=int(os.getenv('SEED')), n_jobs=-1, eval_metric='logloss'
+        ).fit(X_train, y_train)
+        
+        score = cross_val_score(clf, X_train, y_train, scoring=scorer_string, n_jobs=1, cv=10)
+        return score.mean()
 
     # ============================================
 
+    loaded_models = {}
+
     # 3. Create a study object and optimize the objective function.
     try:
-        dtree_model = load_model_by_name(experiment_name=experiment_name, run_name='Decision_Tree')
+        loaded_models['Decision_Tree'] = load_model_by_name(experiment_name=experiment_name, run_name='Decision_Tree')
     except ValueError:
         dtree_study = optuna.create_study(direction='maximize')
         dtree_study.optimize(dtree_objective, n_trials=num_trials)
-        #print(dtree_study.best_trial)
-
         dtree_params = dtree_study.best_params
-        dtree_model = DecisionTreeClassifier(**dtree_params, random_state=int(os.getenv('SEED')))
-        dtree_model = log_model_to_mlflow(
-            dtree_model, "Decision_Tree", dtree_params, 
+        loaded_models['Decision_Tree'] = DecisionTreeClassifier(**dtree_params, random_state=int(os.getenv('SEED')))
+        loaded_models['Decision_Tree'] = log_model_to_mlflow(
+            loaded_models['Decision_Tree'], "Decision_Tree", dtree_params, 
             X_train, y_train, X_test, y_test
         )
 
     try:
-        svm_rbf_model = load_model_by_name(experiment_name=experiment_name, run_name='SVM_RBF')
+        loaded_models['Logistic_Regression'] = load_model_by_name(experiment_name=experiment_name, run_name='Logistic_Regression')
     except ValueError:
-        svm_rbf_study = optuna.create_study(direction='maximize')
-        svm_rbf_study.optimize(svm_rbf_objective, n_trials=num_trials)
-        #print("SVM RBF Best Trial:", svm_rbf_study.best_trial)
-        svm_rbf_params = svm_rbf_study.best_params
-        svm_rbf_model = SVC(kernel='rbf', **svm_rbf_params, random_state=int(os.getenv('SEED')), probability=True)
-        svm_rbf_model = log_model_to_mlflow(
-            svm_rbf_model, "SVM_RBF", svm_rbf_params,
-            X_train_norm, y_train, X_test_norm, y_test
+        logreg_study = optuna.create_study(direction='maximize')
+        logreg_study.optimize(logreg_objective, n_trials=num_trials)
+        logreg_params = logreg_study.best_params
+        loaded_models['Logistic_Regression'] = LogisticRegression(**logreg_params, random_state=int(os.getenv('SEED')))
+        loaded_models['Logistic_Regression'] = log_model_to_mlflow(
+            loaded_models['Logistic_Regression'], "Logistic_Regression", logreg_params,
+            X_train, y_train, X_test_norm, y_test
         )
 
     try:
-        gb_model = load_model_by_name(experiment_name=experiment_name, run_name='Gradient_Boosting')
+        loaded_models['Gradient_Boosting'] = load_model_by_name(experiment_name=experiment_name, run_name='Gradient_Boosting')
     except ValueError:
         gb_study = optuna.create_study(direction='maximize')
         gb_study.optimize(gb_objective, n_trials=num_trials)
-        #print("Gradient Boosting Best Trial:", gb_study.best_trial)
         gb_params = gb_study.best_params
-        gb_model = GradientBoostingClassifier(**gb_params, random_state=int(os.getenv('SEED')))
-        gb_model = log_model_to_mlflow(
-            gb_model, "Gradient_Boosting", gb_params,
+        loaded_models['Gradient_Boosting'] = GradientBoostingClassifier(**gb_params, random_state=int(os.getenv('SEED')))
+        loaded_models['Gradient_Boosting'] = log_model_to_mlflow(
+            loaded_models['Gradient_Boosting'], "Gradient_Boosting", gb_params,
+            X_train, y_train, X_test, y_test
+        )
+
+    try:
+        loaded_models['XGBoost'] = load_model_by_name(experiment_name=experiment_name, run_name='XGBoost')
+    except ValueError:
+        xgb_study = optuna.create_study(direction='maximize')
+        xgb_study.optimize(xgb_objective, n_trials=num_trials)
+        xgb_params = xgb_study.best_params
+        loaded_models['XGBoost'] = XGBClassifier(**xgb_params, random_state=int(os.getenv('SEED')), n_jobs=-1, eval_metric='logloss', enable_categorical=True)
+        loaded_models['XGBoost'] = log_model_to_mlflow(
+            loaded_models['XGBoost'], "XGBoost", xgb_params,
             X_train, y_train, X_test, y_test
         )
 
     if(load):
-        return {'Decision_Tree': dtree_model,
-                'SVM_RBF':svm_rbf_model,
-                'Grandient_Boosting':gb_model}
+        return loaded_models
 
 def getExpName(dataset):
     global CONFIG

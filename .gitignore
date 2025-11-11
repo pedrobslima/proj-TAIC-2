@@ -2,3 +2,5 @@
 .venv/
 mlruns/
 __pycache__
+teste.py
+.vscode/
