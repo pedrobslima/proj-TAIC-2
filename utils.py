@@ -246,6 +246,38 @@ def pfi(model, x, y, name=None):
   plt.show()
   return result
 
+def dms_to_decimal(dms_string):
+    """
+    Converte coordenada em graus, minutos e segundos (DMS) para decimal
+    
+    Args:
+        dms_string: String no formato "23° 33' 1.80\" S" ou variações
+    
+    Returns:
+        Valor decimal da coordenada
+    """
+    # Extrair números e direção usando regex
+    # Padrão: captura graus, minutos, segundos e direção (N/S/E/W)
+    pattern = r"(\d+)º?\s*(\d+)'?\s*([\d.]+)\"?\s*([NSLO])"
+    match = re.search(pattern, dms_string.upper())
+    
+    if not match:
+        raise ValueError(f"Formato inválido: {dms_string}")
+    
+    degrees = float(match.group(1))
+    minutes = float(match.group(2))
+    seconds = float(match.group(3))
+    direction = match.group(4)
+    
+    # Calcular decimal
+    decimal = degrees + (minutes / 60) + (seconds / 3600)
+    
+    # Aplicar sinal negativo para Sul e Oeste
+    if direction in ['S', 'O']:
+        decimal = -decimal
+    
+    return decimal
+
 def transform_property(x):
     x = re.sub('(Private room( in )?)|(Shared room( in )?)|(Entire )|(Room in )', '', x).lower()
     if(x=='casa particular'):
