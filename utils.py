@@ -9,7 +9,8 @@ import re
 import mlflow
 import mlflow.sklearn
 import optuna
-#import logging
+import matplotlib.pyplot as plt
+from sklearn.inspection import permutation_importance
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
@@ -165,20 +166,85 @@ def load_model_by_name(experiment_name, run_name):
     model_uri = f"runs:/{run_id}/{run_name}"
     model = mlflow.sklearn.load_model(model_uri)
     
-    # Extrair informações da run
-    #run_info = {
-    #    'run_id': run_id,
-    #    'run_name': run_name,
-    #    'start_time': run.start_time,
-    #    'params': {k.replace('params.', ''): v for k, v in run.items() if k.startswith('params.')},
-    #    'metrics': {k.replace('metrics.', ''): v for k, v in run.items() if k.startswith('metrics.')}
-    #}
-    
-    #print(f"✓ Modelo '{run_name}' carregado com sucesso!")
-    #print(f"  Run ID: {run_id}")
-    ##print(f"  Métricas: F1={run_info['metrics'].get('f1_score', 'N/A'):.4f}")
-    
     return model#, run_info
+
+def load_model_metrics_by_name(experiment_name, run_name):
+    """
+    Carrega um modelo específico do MLflow pelo nome da run.
+    
+    Parameters:
+    -----------
+    experiment_name : str
+        Nome do experimento MLflow
+    run_name : str
+        Nome da run (ex: "Random_Forest", "XGBoost")
+    
+    Returns:
+    --------
+    model : estimator
+        Modelo carregado
+    run_info : dict
+        Informações da run (hiperparâmetros e métricas)
+    """
+    # Buscar experimento
+    experiment = mlflow.get_experiment_by_name(experiment_name)
+    if experiment is None:
+        raise ValueError(f"Experimento '{experiment_name}' não encontrado!")
+    
+    # Buscar runs do experimento
+    runs = mlflow.search_runs(
+        experiment_ids=[experiment.experiment_id],
+        filter_string=f"tags.mlflow.runName = '{run_name}'"
+    )
+    
+    if runs.empty:
+        raise ValueError(f"Run '{run_name}' não encontrada no experimento '{experiment_name}'!")
+    
+    # Pegar a run mais recente se houver múltiplas
+    run = runs.iloc[0]
+    run_id = run.run_id
+    
+    # Extrair informações da run
+    run_info = {k.replace('metrics.', ''): v for k, v in run.items() if k.startswith('metrics.')}
+    
+    return run_info
+
+def load_all_models_metrics(experiments:str|list, model_names:list=['Decision_Tree', 'Logistic_Regression', 'Gradient_Boosting', 'XGBoost']) -> dict:
+    models = {}
+
+    if(isinstance(experiments, str)):
+        experiments = [experiments]*len(model_names)
+    else:
+        if(len(experiments) != len(model_names)):
+            raise ValueError('Variável "experiments" deve ser uma lista com tamanho igual à "models", ou ser apenas uma string')
+
+    for i in range(len(model_names)):
+        metrics = load_model_metrics_by_name(experiments[i], model_names[i])
+        models[model_names[i]] = metrics
+
+    return models
+
+def pfi(model, x, y, name=None):
+  result = permutation_importance(model, x, y,n_repeats=30, random_state=int(os.getenv('SEED')))
+
+  cols = [f"[{i}] - {x.columns[i]}" for i in range(len(x.columns))]
+
+  importances = pd.Series(result.importances_mean, index=cols)
+
+  _, ax = plt.subplots(figsize=(18,9))
+
+  importances.plot.bar(yerr=result.importances_std, ax=ax)
+
+  if(name):
+    ax.set_title(f"Feature importances on {name} model")
+  else:
+    name = str(model)
+    i = name.find('(')
+    ax.set_title(f"Feature importances on {name[:i]} model\n{name[i:]}")#, fontsize=10)
+  ax.set_ylabel("Mean accuracy decrease", fontsize=12)
+  plt.xticks(rotation=85, fontsize=9)
+  plt.show()
+  return result
 
 def transform_property(x):
     x = re.sub('(Private room( in )?)|(Shared room( in )?)|(Entire )|(Room in )', '', x).lower()
