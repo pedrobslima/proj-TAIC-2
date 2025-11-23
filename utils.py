@@ -168,7 +168,7 @@ def load_model_by_name(experiment_name, run_name):
     
     return model#, run_info
 
-def load_model_metrics_by_name(experiment_name, run_name):
+def load_model_info_by_name(experiment_name, run_name):
     """
     Carrega um modelo específico do MLflow pelo nome da run.
     
@@ -202,14 +202,16 @@ def load_model_metrics_by_name(experiment_name, run_name):
     
     # Pegar a run mais recente se houver múltiplas
     run = runs.iloc[0]
-    run_id = run.run_id
     
     # Extrair informações da run
-    run_info = {k.replace('metrics.', ''): v for k, v in run.items() if k.startswith('metrics.')}
-    
+    run_info = {
+        'params': {k.replace('params.', ''): v for k, v in run.items() if k.startswith('params.')},
+        'metrics': {k.replace('metrics.', ''): v for k, v in run.items() if k.startswith('metrics.')}
+        }
+
     return run_info
 
-def load_all_models_metrics(experiments:str|list, model_names:list=['Decision_Tree', 'Logistic_Regression', 'Gradient_Boosting', 'XGBoost']) -> dict:
+def load_all_models_info(experiments:str|list, model_names:list=['Decision_Tree', 'Logistic_Regression', 'Gradient_Boosting', 'XGBoost']) -> dict:
     models = {}
 
     if(isinstance(experiments, str)):
@@ -219,7 +221,7 @@ def load_all_models_metrics(experiments:str|list, model_names:list=['Decision_Tr
             raise ValueError('Variável "experiments" deve ser uma lista com tamanho igual à "models", ou ser apenas uma string')
 
     for i in range(len(model_names)):
-        metrics = load_model_metrics_by_name(experiments[i], model_names[i])
+        metrics = load_model_info_by_name(experiments[i], model_names[i])
         models[model_names[i]] = metrics
 
     return models
